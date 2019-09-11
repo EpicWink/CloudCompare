@@ -103,6 +103,44 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 	if (!file.open(QFile::Text | QFile::WriteOnly))
 		return CC_FERR_WRITING;
 
+	//mesh attribute options and number of progress steps
+	unsigned numSteps = nbPoints;
+
+	bool withTriNormals = mesh->hasTriNormals();
+	bool withVertNormals = vertices->hasNormals();
+	bool withNormals = withTriNormals || withVertNormals;
+	if (withNormals)
+	{
+		if (withTriNormals)
+		{
+			unsigned numTriangleNormals = mesh->getTriNormsTable()->currentSize();
+			numSteps += numTriangleNormals;
+		}
+		else
+		{
+			numSteps += nbPoints;
+		}
+	}
+
+	const ccMaterialSet* materials = mesh->getMaterialSet();
+	bool withMaterials = (materials && mesh->hasMaterials());
+	if (withMaterials)
+		numSteps += 1;
+
+	bool withTexCoordinates = withMaterials && mesh->hasPerTriangleTexCoordIndexes();
+	if (withTexCoordinates)
+	{
+		TextureCoordsContainer* texCoords = mesh->getTexCoordinatesTable();
+		if (texCoords)
+		{
+			unsigned numTexCoords = texCoords->currentSize();
+			numSteps += numTexCoords;
+		}
+	}
+
+	unsigned numTriangles = mesh->size();
+	numSteps += numTriangles;
+
 	//progress (start with vertices)
 	QScopedPointer<ccProgressDialog> pDlg(nullptr);
 	if (parameters.parentWidget)
@@ -113,7 +151,7 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 		pDlg->setAutoClose(false); //don't close dialogue when progress bar is full
 		pDlg->start();
 	}
-	CCLib::NormalizedProgress nprogress(pDlg.data(), nbPoints);
+	CCLib::NormalizedProgress nprogress(pDlg.data(), numSteps);
 
 	QTextStream stream(&file);
 	stream.setRealNumberNotation(QTextStream::FixedNotation);
@@ -137,25 +175,19 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 	}
 
 	//normals
-	bool withTriNormals = mesh->hasTriNormals();
-	bool withVertNormals = vertices->hasNormals();
-	bool withNormals = withTriNormals || withVertNormals;
 	if (withNormals)
 	{
 		//per-triangle normals
 		if (withTriNormals)
 		{
 			NormsIndexesTableType* normsTable = mesh->getTriNormsTable();
-
-			//reset save dialog
-			unsigned numTriangleNormals = normsTable->currentSize();
-			if (pDlg)
-				pDlg->setInfo(QObject::tr("Writing $1 triangle normals").arg(numTriangleNormals));
-			nprogress.scale(numTriangleNormals);
-			nprogress.reset();
-
 			if (normsTable)
 			{
+				//relabel save dialog
+				unsigned numTriangleNormals = mesh->getTriNormsTable()->currentSize();
+				if (parameters.parentWidget)
+					pDlg->setInfo(QObject::tr("Writing $1 triangle normals").arg(numTriangleNormals));
+
 				for (unsigned i = 0; i < numTriangleNormals; ++i)
 				{
 					const CCVector3& normalVec = ccNormalVectors::GetNormal(normsTable->getValue(i));
@@ -177,11 +209,9 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 		//per-vertices normals
 		else //if (withVertNormals)
 		{
-			//reset save dialog
+			//relabel save dialog
 			if (pDlg)
 				pDlg->setInfo(QObject::tr("Writing %1 vertex normals").arg(nbPoints));
-			nprogress.scale(nbPoints);
-			nprogress.reset();
 
 			for (unsigned i = 0; i < nbPoints; ++i)
 			{
@@ -200,15 +230,11 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 	}
 
 	//materials
-	const ccMaterialSet* materials = mesh->getMaterialSet();
-	bool withMaterials = (materials && mesh->hasMaterials());
 	if (withMaterials)
 	{
-		//reset save dialog
+		//relabel save dialog
 		if (pDlg)
 			pDlg->setInfo(QObject::tr("Writing %1 materials").arg(materials->size()));
-		nprogress.scale(1);
-		nprogress.reset();
 
 		//save mtl file
 		QStringList errors;
@@ -237,20 +263,15 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 	}
 
 	//save texture coordinates
-	bool withTexCoordinates = withMaterials && mesh->hasPerTriangleTexCoordIndexes();
 	if (withTexCoordinates)
 	{
 		TextureCoordsContainer* texCoords = mesh->getTexCoordinatesTable();
 		if (texCoords)
 		{
-			//reset save dialog
+			//relabel save dialog
 			unsigned numTexCoords = texCoords->currentSize();
 			if (pDlg)
-			{
 				pDlg->setInfo(QObject::tr("Writing %1 texture coordinates").arg(numTexCoords));
-			}
-			nprogress.scale(numTexCoords);
-			nprogress.reset();
 
 			for (unsigned i=0; i<texCoords->currentSize(); ++i)
 			{
@@ -289,15 +310,12 @@ CC_FILE_ERROR ObjFilter::saveToFile(ccHObject* entity, const QString& filename, 
 		}
 	}
 
-	//reset save dialog for triangles
-	unsigned numTriangles = mesh->size();
+	//relabel save dialog for triangles
 	if (pDlg)
 	{
 		pDlg->setInfo(QObject::tr("Writing %1 triangles").arg(numTriangles));
 		pDlg->setAutoClose(true); //(re-enable) close dialogue when progress bar is full
 	}
-	nprogress.scale(numTriangles);
-	nprogress.reset();
 
 	//mesh or sub-meshes
 	unsigned indexShift = 0;
